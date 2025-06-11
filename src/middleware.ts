@@ -1,46 +1,79 @@
-import { createServerClient } from '@supabase/ssr';
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { NextResponse, type NextRequest } from 'next/server';
 
-export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+export async function middleware(request: NextRequest) {
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         get(name: string) {
-          return req.cookies.get(name)?.value;
+          return request.cookies.get(name)?.value;
         },
-        set(name: string, value: string, options: any) {
-          res.cookies.set({ name, value, ...options });
+        set(name: string, value: string, options: CookieOptions) {
+          response.cookies.set({
+            name,
+            value,
+            ...options,
+          });
         },
-        remove(name: string, options: any) {
-          res.cookies.set({ name, value: '', ...options });
+        remove(name: string, options: CookieOptions) {
+          response.cookies.set({
+            name,
+            value: '',
+            ...options,
+          });
         },
       },
     }
   );
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
 
-  // If user is not signed in and the current path is not /login or /signup,
-  // redirect the user to /login
-  if (!session && !['/login', '/signup'].includes(req.nextUrl.pathname)) {
-    return NextResponse.redirect(new URL('/login', req.url));
+  // Get the current path
+  const path = request.nextUrl.pathname;
+
+  // Define auth routes
+  const isAuthRoute = path === '/login' || 
+                     path === '/signup' ||
+                     path === '/reset-password';
+
+  // Define protected routes
+  const isProtectedRoute = path.startsWith('/dashboard') ||
+                          path.startsWith('/profile') ||
+                          path.startsWith('/stories');
+
+  // If user is not signed in and trying to access a protected route
+  if (!session && isProtectedRoute) {
+    const redirectUrl = new URL('/login', request.url);
+    return NextResponse.redirect(redirectUrl);
   }
 
-  // If user is signed in and the current path is /login or /signup,
-  // redirect the user to /dashboard
-  if (session && ['/login', '/signup'].includes(req.nextUrl.pathname)) {
-    return NextResponse.redirect(new URL('/dashboard', req.url));
+  // If user is signed in and trying to access auth routes
+  if (session && isAuthRoute) {
+    const redirectUrl = new URL('/dashboard', request.url);
+    return NextResponse.redirect(redirectUrl);
   }
 
-  return res;
+  // For all other routes, continue with the request
+  return response;
 }
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public folder
+     */
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 }; 

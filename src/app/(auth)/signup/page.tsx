@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { createBrowserClient } from '@supabase/ssr';
 
 export default function SignUpPage() {
   const [email, setEmail] = useState('');
@@ -14,35 +14,44 @@ export default function SignUpPage() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
     setIsLoading(true);
-    
+
     try {
-      // First, check if username is already taken
+      console.log('Checking if username is taken...');
+      // Check if username is already taken
       const { data: existingUser, error: checkError } = await supabase
         .from('profiles')
         .select('username')
         .eq('username', username)
         .single();
 
-      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+      if (checkError && checkError.code !== 'PGRST116') {
         console.error('Username check error:', checkError);
-        throw new Error(`Error checking username: ${checkError.message}`);
+        throw checkError;
       }
 
       if (existingUser) {
         throw new Error('Username is already taken');
       }
 
-      // Sign up the user
-      const { data, error: signUpError } = await supabase.auth.signUp({
+      console.log('Creating user in auth...');
+      // Create the user
+      const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          data: {
+            username: username,
+          },
         },
       });
 
@@ -51,58 +60,20 @@ export default function SignUpPage() {
         throw signUpError;
       }
 
-      if (!data.user) {
+      if (!authData.user) {
         throw new Error('No user data returned from signup');
       }
 
-      console.log('User created successfully:', data.user.id);
-
-      // Check if profile already exists
-      const { data: existingProfile, error: profileCheckError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', data.user.id)
-        .single();
-
-      if (profileCheckError && profileCheckError.code !== 'PGRST116') {
-        console.error('Profile check error:', profileCheckError);
-        throw new Error(`Error checking profile: ${profileCheckError.message}`);
-      }
-
-      // Only create profile if it doesn't exist
-      if (!existingProfile) {
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert([
-            {
-              id: data.user.id,
-              email: data.user.email,
-              username: username,
-            },
-          ]);
-
-        if (profileError) {
-          console.error('Profile creation error details:', {
-            code: profileError.code,
-            message: profileError.message,
-            details: profileError.details,
-            hint: profileError.hint
-          });
-          throw new Error(`Failed to create profile: ${profileError.message}`);
-        }
-        console.log('Profile created successfully');
-      } else {
-        console.log('Profile already exists, skipping creation');
-      }
-
-      // Show success message and redirect to login
+      console.log('User created successfully');
       setSuccess('Account created successfully! Please check your email to verify your account before signing in.');
-      setTimeout(() => {
-        router.push('/login');
-      }, 3000);
-
+      
+      // Clear the form
+      setEmail('');
+      setPassword('');
+      setUsername('');
+      
     } catch (err: any) {
-      console.error('Full signup error:', err);
+      console.error('Signup error:', err);
       setError(err.message || 'Failed to create account. Please try again.');
     } finally {
       setIsLoading(false);
@@ -153,6 +124,7 @@ export default function SignUpPage() {
                 id="email"
                 name="email"
                 type="email"
+                autoComplete="email"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Email address"
@@ -169,8 +141,9 @@ export default function SignUpPage() {
                 id="password"
                 name="password"
                 type="password"
+                autoComplete="new-password"
                 required
-                className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -188,15 +161,16 @@ export default function SignUpPage() {
               {isLoading ? 'Creating account...' : 'Sign up'}
             </button>
           </div>
+
+          <div className="text-center">
+            <p className="text-sm text-gray-600">
+              Already have an account?{' '}
+              <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500">
+                Sign in
+              </Link>
+            </p>
+          </div>
         </form>
-        <div className="text-center">
-          <Link
-            href="/login"
-            className="font-medium text-blue-600 hover:text-blue-500"
-          >
-            Already have an account? Sign in
-          </Link>
-        </div>
       </div>
     </div>
   );
